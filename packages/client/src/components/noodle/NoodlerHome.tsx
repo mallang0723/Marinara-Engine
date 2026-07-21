@@ -751,6 +751,22 @@ export function NoodlerHome({ navigation, onNavigate }: NoodlerHomeProps) {
           saveProfilePending={updateProfileMedia.isPending}
           onUploadImage={uploadStageProfileImage}
           uploadPending={uploadGlobalImages.isPending}
+          composer={
+            <details className="group border-b border-[var(--noodle-divider)]">
+              <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 px-5 py-3 text-xs font-bold text-[var(--noodle-blue)] hover:bg-[var(--noodle-blue)]/10 [&::-webkit-details-marker]:hidden">
+                <ChevronRight size={15} className="transition-transform group-open:rotate-90" />
+                Post as {selectedProfile.displayName}
+              </summary>
+              <InlineGuidedComposer
+                managedProfiles={[selectedProfile]}
+                selectedProfileId={selectedProfile.id}
+                onSelectedProfileChange={() => {}}
+                onSubmit={generatePrivatePost}
+                isPosting={generatePost.isPending}
+                error={generationError}
+              />
+            </details>
+          }
           onDelete={() => {
             if (!window.confirm(`Delete ${selectedProfile.displayName} and all of this NoodleR profile's posts?`)) {
               return;
