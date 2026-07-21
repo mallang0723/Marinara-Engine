@@ -102,6 +102,7 @@ import {
   useInviteNoodleCharacter,
   useInviteNoodleCharacters,
   useNoodle,
+  useNoodlerAccounts,
   usePatchNoodleAccountSettings,
   useRefreshNoodle,
   useRemoveNoodleCharacter,
@@ -2776,6 +2777,15 @@ export function NoodleHome({ navigation, onNavigate }: NoodleHomeProps) {
     viewedProfileAccount.kind === "character" &&
     hasGeneratedProfile(viewedProfileAccount) &&
     (viewedProfileAccount.invited || folderInvitedCharacterIds.has(viewedProfileAccount.entityId)),
+  );
+  // "Create stage profile" entry: a stage profile can be spun up straight from a
+  // character/persona profile, even when NoodleR is already enabled. Hidden once one exists.
+  const stageProfilesQuery = useNoodlerAccounts(Boolean(settings?.enableNoodler));
+  const canCreateStageProfile = Boolean(
+    settings?.enableNoodler &&
+    viewedProfileAccount &&
+    (viewedProfileAccount.kind === "character" || viewedProfileAccount.kind === "persona") &&
+    !stageProfilesQuery.data?.some((profile) => profile.publicAccountId === viewedProfileAccount.id),
   );
   const canFollowAccount = useCallback(
     (account: NoodleAccount | null) =>
@@ -5500,6 +5510,22 @@ export function NoodleHome({ navigation, onNavigate }: NoodleHomeProps) {
                         className="hidden"
                         onChange={(event) => handleProfileImageFile("avatar", event)}
                       />
+                      <div className="mb-1 flex items-center gap-2">
+                      {canCreateStageProfile && !isEditingProfile && viewedProfileAccount && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onNavigate({
+                              mode: "private",
+                              view: "profiles",
+                              createFromAccountId: viewedProfileAccount.id,
+                            })
+                          }
+                          className="h-9 rounded-full border border-[var(--noodle-divider)] px-5 text-xs font-bold transition-opacity hover:bg-[var(--accent)]"
+                        >
+                          Create stage profile
+                        </button>
+                      )}
                       {canEditViewedProfile ? (
                         <button
                           type="button"
@@ -5529,6 +5555,7 @@ export function NoodleHome({ navigation, onNavigate }: NoodleHomeProps) {
                           {viewedProfileFollowed ? "Following" : "Follow"}
                         </button>
                       ) : null}
+                      </div>
                     </div>
 
                     {isEditingProfile ? (

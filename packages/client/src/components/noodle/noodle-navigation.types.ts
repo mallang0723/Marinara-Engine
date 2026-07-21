@@ -11,6 +11,6 @@ export type NoodleNavigationState =
       connection: NoodleProfileConnection | null;
     }
   | { mode: "private"; view: "hub" }
-  | { mode: "private"; view: "profiles" }
+  | { mode: "private"; view: "profiles"; createFromAccountId?: string | null }
   | { mode: "verification" }
   | { mode: "settings" };

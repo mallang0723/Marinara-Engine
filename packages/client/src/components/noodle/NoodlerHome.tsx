@@ -378,7 +378,12 @@ export function NoodlerHome({ navigation, onNavigate }: NoodlerHomeProps) {
   const updateProfileMedia = useUpdateNoodlerStageProfileMedia();
   const uploadGlobalImages = useUploadGlobalGalleryImages();
   const eligiblePublicAccounts = eligibleAccountsQuery.data?.pages.flatMap((page) => page.items) ?? [];
-  const selectedSource = eligiblePublicAccounts.find((account) => account.id === draftPublicAccountId) ?? null;
+  // Fall back to the bootstrap accounts so a source deep-linked from a Noodle profile page
+  // (which may not be on the current eligible-picker page) still resolves for the wizard.
+  const selectedSource =
+    eligiblePublicAccounts.find((account) => account.id === draftPublicAccountId) ??
+    (data?.accounts ?? []).find((account) => account.id === draftPublicAccountId) ??
+    null;
   const sourcePickerLoading = eligibleAccountsQuery.isLoading || eligibleAccountsQuery.isFetching;
 
   const handleSourceSearch = (value: string) => {
@@ -412,6 +417,24 @@ export function NoodlerHome({ navigation, onNavigate }: NoodlerHomeProps) {
     setSourceSearch("");
     setSourceKind("all");
   };
+
+  // Deep-link from a Noodle character/persona profile's "Create stage profile" button:
+  // preselect that source and skip straight to the disclosure step.
+  const handledCreateFromRef = useRef<string | null>(null);
+  const createFromAccountId =
+    navigation.mode === "private" && navigation.view === "profiles" ? navigation.createFromAccountId ?? null : null;
+  useEffect(() => {
+    if (!enabled || !createFromAccountId || handledCreateFromRef.current === createFromAccountId) return;
+    handledCreateFromRef.current = createFromAccountId;
+    setEditingProfileId(null);
+    setProfileDraft(null);
+    setDraftPublicAccountId(createFromAccountId);
+    setCreationDisclosure("hinted");
+    setDraftGuidance("");
+    setDraftConnectionId("");
+    setPreviousDraft(null);
+    setCreationStep("disclosure");
+  }, [createFromAccountId, enabled]);
 
   const beginEdit = (profile: NoodlerStageProfile) => {
     setEditingProfileId(profile.id);
