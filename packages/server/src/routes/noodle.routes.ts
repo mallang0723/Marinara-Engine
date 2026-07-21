@@ -904,9 +904,20 @@ export async function noodleRoutes(app: FastifyInstance) {
         }
         const conn = await connections.getWithKey(connectionId);
         if (!conn) return reply.code(404).send({ error: "Noodle generation connection not found" });
+        // Resolve the image connection exactly as the public branch does, so guided private
+        // posts get LLM-generated images when the user has image prompts enabled.
+        const imageConnection = settings.enableImagePrompts
+          ? settings.imageGenerationConnectionId
+            ? await connections.getWithKey(settings.imageGenerationConnectionId)
+            : await connections.getDefaultForImageGeneration()
+          : null;
+        if (settings.enableImagePrompts && !imageConnection) {
+          return reply.code(400).send({ error: "Select a Noodle image generation connection first." });
+        }
         const generated = await generatePrivatePost(app.db, {
           request: parsed.data,
           connection: conn,
+          imageConnection,
         });
         if (!generated.ok) return reply.code(404).send({ error: generated.message });
         return generated.post;

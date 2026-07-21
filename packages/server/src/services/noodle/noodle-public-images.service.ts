@@ -111,6 +111,10 @@ export async function generateNoodlePostImage(input: {
   debugMode: boolean;
   previewOnly?: boolean;
   promptOverride?: { prompt: string; negativePrompt?: string };
+  // Where the finished image is stored. Character-kind accounts default to the character's
+  // public gallery; private NoodleR posts pass "noodle" so a private image never leaks into
+  // that public gallery while still using the character's appearance/avatar as a reference.
+  galleryScope?: "character" | "noodle";
 }) {
   const imageSettings = await loadImageGenerationUserSettings(input.db);
   const imageDefaults = resolveConnectionImageDefaults(input.imageConnection);
@@ -246,12 +250,13 @@ export async function generateNoodlePostImage(input: {
     },
   );
   const provider = input.imageConnection.provider ?? "image_generation";
+  const storeInCharacterGallery = input.account.kind === "character" && input.galleryScope !== "noodle";
   const file = stageImageToDisk(
-    input.account.kind === "character" ? `characters/${input.account.entityId}` : "noodle",
+    storeInCharacterGallery ? `characters/${input.account.entityId}` : "noodle",
     image.base64,
     image.ext,
   );
-  if (input.account.kind === "character") {
+  if (storeInCharacterGallery) {
     return {
       imageUrl: characterGalleryImageUrl(input.account.entityId, file.filePath),
       metadata: {
