@@ -429,6 +429,10 @@ import {
 } from "../../packages/server/src/routes/generate/conversation-history-runtime.js";
 import { formatConversationGroupOutputFormat } from "../../packages/server/src/routes/generate/conversation-prompt-formatting.js";
 import {
+  buildConversationCurrentContextBlock,
+  replaceConversationContextBlockForTarget,
+} from "../../packages/server/src/routes/generate/conversation-context-block.js";
+import {
   LEGACY_DEFAULT_CONVERSATION_PROMPT_LEAD,
   migrateLegacyDefaultConversationPromptLead,
 } from "../../packages/server/src/db/default-conversation-prompt-migration.js";
@@ -456,6 +460,7 @@ import { buildLegacyDefaultAgentConfigUpdate } from "../../packages/server/src/s
 import { buildMemoryRecallBlock } from "../../packages/server/src/services/generation/memory-recall-context.js";
 import { truncateRecalledMemory } from "../../packages/server/src/services/generation/memory-recall-pack.js";
 import { mergeConversationCharacterMemories } from "../../packages/server/src/services/generation/conversation-memory-context.js";
+import { formatSmartGroupCandidates } from "../../packages/server/src/services/generation/conversation-context-utils.js";
 import {
   formatAwarenessContextBlock,
   formatAwarenessConversationBlock,
@@ -508,6 +513,7 @@ import {
   type SimpleMessage,
 } from "../../packages/server/src/routes/generate/generate-route-utils.js";
 import { formatRoleplaySummaryChatLog } from "../../packages/server/src/services/generation/roleplay-summary-runtime.js";
+import { scopeIndividualGroupMessagesForTarget } from "../../packages/server/src/services/generation/prompt-message-scope.js";
 import { resolveGenerationPromptPresetChoices } from "../../packages/server/src/routes/generate/prompt-preset-selection.js";
 import {
   calibrateLorebookSimilarity,
@@ -655,6 +661,65 @@ const keywordOptions = {
 };
 
 const cases: RegressionCase[] = [
+  {
+    name: "Conversation smart sorting separates each character candidate without changing Roleplay formatting",
+    run() {
+      const candidates = [
+        {
+          id: "dottore",
+          name: "Dottore",
+          talkativeness: 70,
+          status: "online",
+          personality: "Core Traits:\n- precise\n- merciless",
+        },
+        {
+          id: "pantalone",
+          name: "Pantalone",
+          talkativeness: 45,
+          activity: "Reviewing the ledgers",
+        },
+      ];
+
+      assert.equal(
+        formatSmartGroupCandidates(candidates, true),
+        [
+          "<candidate>",
+          "id: dottore",
+          "name: Dottore",
+          "talkativeness: 70%",
+          "current status: online",
+          "personality: Core Traits:",
+          "- precise",
+          "- merciless",
+          "</candidate>",
+          "",
+          "<candidate>",
+          "id: pantalone",
+          "name: Pantalone",
+          "talkativeness: 45%",
+          "current activity: Reviewing the ledgers",
+          "</candidate>",
+        ].join("\n"),
+      );
+      assert.equal(
+        formatSmartGroupCandidates(candidates, false),
+        [
+          "- id: dottore",
+          "  name: Dottore",
+          "  talkativeness: 70%",
+          "  current status: online",
+          "  personality: Core Traits:",
+          "- precise",
+          "- merciless",
+          "",
+          "- id: pantalone",
+          "  name: Pantalone",
+          "  talkativeness: 45%",
+          "  current activity: Reviewing the ledgers",
+        ].join("\n"),
+      );
+    },
+  },
   {
     name: "installed Conversation feature commands do not require per-chat agent attachment",
     run() {
@@ -4880,12 +4945,134 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
       );
       assert.equal(formatOutput("markdown"), `## Output Format\n${instruction}\n${responseBoundary}`);
       assert.equal(formatOutput("none"), `${instruction}\n${responseBoundary}`);
+      assert.equal(
+        formatConversationGroupOutputFormat({
+          wrapFormat: "markdown",
+          characterNames: ["Dottore", "Pantalone"],
+          userName: "Mari",
+          turnCharacterName: "Dottore",
+        }),
+        `## Output Format\nRespond only as Dottore.`,
+      );
+
+      const individualOutput = formatConversationGroupOutputFormat({
+        wrapFormat: "xml",
+        characterNames: ["Dottore", "Pantalone"],
+        userName: "Mari",
+        turnCharacterName: "Dottore",
+      });
+      assert.match(individualOutput, /Respond only as Dottore\./u);
+      assert.doesNotMatch(individualOutput, /prefix messages|Pantalone|Never respond for Mari/u);
+
+      const contextCharacters = [
+        {
+          charId: "dottore",
+          name: "Dottore",
+          displayName: "Dottore",
+          status: "online",
+          activity: "",
+        },
+        {
+          charId: "pantalone",
+          name: "Pantalone",
+          displayName: "Pantalone",
+          status: "online",
+          activity: "",
+        },
+      ];
+      const sharedContext = buildConversationCurrentContextBlock({
+        nowInstant: new Date("2026-07-21T13:58:00.000Z"),
+        promptTimeZone: "Europe/Warsaw",
+        convoCharInfo: contextCharacters,
+        finalMessages: [{ role: "user" }],
+        personaName: "Mari",
+        userStatus: "active",
+        mentionedCharacterNames: ["Dottore"],
+        wrapFormat: "none",
+      });
+      const dottoreContext = buildConversationCurrentContextBlock({
+        nowInstant: new Date("2026-07-21T13:58:00.000Z"),
+        promptTimeZone: "Europe/Warsaw",
+        convoCharInfo: contextCharacters,
+        finalMessages: [{ role: "user" }],
+        personaName: "Mari",
+        userStatus: "active",
+        mentionedCharacterNames: ["Dottore"],
+        primaryCharacterId: "dottore",
+        wrapFormat: "none",
+      });
+      assert.match(sharedContext, /Your current status: Dottore: online; Pantalone: online\./u);
+      assert.match(dottoreContext, /^Your current status: Dottore: online\.\nPantalone's status: online\./u);
+      assert.doesNotMatch(dottoreContext, /Your current status:.*Pantalone/u);
+      assert.match(dottoreContext, /Mari @mentioned: Dottore/u);
+      assert.equal(
+        replaceConversationContextBlockForTarget(`Before\n${sharedContext}\nAfter`, sharedContext, dottoreContext),
+        `Before\n${dottoreContext}\nAfter`,
+      );
+
+      const deferredIdentity = resolveMacros(
+        "You are {{charName}}.",
+        {
+          user: "Mari",
+          char: "Dottore",
+          characters: ["Dottore", "Pantalone"],
+          groupCharacters: ["Dottore", "Pantalone"],
+          variables: {},
+        },
+        { deferCharacterMacros: "names" },
+      );
+      assert.equal(resolveDeferredCharacterMacros(deferredIdentity, { name: "Pantalone" }), "You are Pantalone.");
 
       const contextSource = readFileSync(
         new URL("../../packages/server/src/routes/generate/conversation-context-block.ts", import.meta.url),
         "utf8",
       );
       assert.equal(contextSource.includes(instruction), false);
+
+      const routeSource = readFileSync(
+        new URL("../../packages/server/src/routes/generate.routes.ts", import.meta.url),
+        "utf8",
+      );
+      assert.match(routeSource, /groupTurnPromptEnabled && chatMode === "roleplay"/u);
+      assert.doesNotMatch(routeSource, /groupTurnPromptEnabled && chatMode !== "conversation"/u);
+      assert.match(
+        routeSource,
+        /if \(individualConversationGroup\) \{\s+conversationInstructionParts\.push\("This is a group DM with other participants\."\);\s+\} else if \(isGroup\)/u,
+      );
+      assert.doesNotMatch(routeSource, /conversationInstructionParts[^;]+\.join\("\\n\\n"\)/su);
+    },
+  },
+  {
+    name: "individual Conversation turns attach only the responding character card",
+    run() {
+      const scoped = scopeIndividualGroupMessagesForTarget(
+        [
+          {
+            role: "system",
+            content: [
+              "<Dottore>\n<description>Dottore card only.</description>\n</Dottore>",
+              "<Pantalone>\n<description>Pantalone card only.</description>\n</Pantalone>",
+            ].join("\n"),
+            contextKind: "prompt",
+          },
+          {
+            role: "assistant",
+            content: "Pantalone spoke earlier and remains visible as shared history.",
+            contextKind: "history",
+            characterId: "pantalone",
+          },
+        ],
+        "dottore",
+        [
+          { id: "dottore", name: "Dottore", description: "Dottore card only." },
+          { id: "pantalone", name: "Pantalone", description: "Pantalone card only." },
+        ],
+      );
+
+      assert.match(scoped[0]?.content ?? "", /Dottore card only\./u);
+      assert.doesNotMatch(scoped[0]?.content ?? "", /Pantalone card only\./u);
+      assert.equal(scoped[1]?.role, "user");
+      assert.match(scoped[1]?.content ?? "", /Pantalone spoke earlier/u);
     },
   },
   {
