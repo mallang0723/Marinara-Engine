@@ -27,7 +27,7 @@ const REGISTRY = join(ROOT, "installed.json");
 const AVAILABILITY_MIGRATION = join(ROOT, "availability-migration-v1.json");
 const HIERARCHICAL_MAPS_SELECTION_CORRECTION = join(ROOT, "hierarchical-maps-selection-correction-v1.json");
 const NON_DOWNLOADABLE_CORE_PACKAGE_IDS = new Set(["about-me-keeper"]);
-const OFFICIAL_CATALOG_ROOT = "https://raw.githubusercontent.com/Pasta-Devs/Marinara-Agents/main/catalog";
+const OFFICIAL_CATALOG_ROOT = "https://raw.githubusercontent.com/Pasta-Devs/Marinara-Agents/pasta-phone/catalog";
 const ENGINE_RELEASE_VERSION_PATTERN = /^v?(\d+)\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u;
 export function resolveCapabilityCatalogUrl(
   engineVersion: string = APP_VERSION,

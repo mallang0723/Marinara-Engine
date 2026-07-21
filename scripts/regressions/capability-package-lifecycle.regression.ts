@@ -176,15 +176,15 @@ try {
   );
   assert.equal(
     resolveCapabilityCatalogUrl("2.3.1", ""),
-    "https://raw.githubusercontent.com/Pasta-Devs/Marinara-Agents/main/catalog/v2/catalog.json",
+    "https://raw.githubusercontent.com/Pasta-Devs/Marinara-Agents/pasta-phone/catalog/v2/catalog.json",
   );
   assert.equal(
     resolveCapabilityCatalogUrl("3.2.2-beta.1", ""),
-    "https://raw.githubusercontent.com/Pasta-Devs/Marinara-Agents/main/catalog/v3/catalog.json",
+    "https://raw.githubusercontent.com/Pasta-Devs/Marinara-Agents/pasta-phone/catalog/v3/catalog.json",
   );
   assert.equal(
     resolveCapabilityCatalogUrl("development", ""),
-    "https://raw.githubusercontent.com/Pasta-Devs/Marinara-Agents/main/catalog/catalog.json",
+    "https://raw.githubusercontent.com/Pasta-Devs/Marinara-Agents/pasta-phone/catalog/catalog.json",
     "Non-release builds must fall back to the legacy catalog instead of requesting a nonexistent lane",
   );
   assert.equal(getCapabilityPackageInstallIssue(legacyManifest), null);
