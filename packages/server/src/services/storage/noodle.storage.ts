@@ -733,6 +733,8 @@ export function createNoodleStorage(db: DB) {
             bio: account.bio,
             avatarUrl: account.avatarUrl,
             avatarCrop: account.avatarCrop,
+            bannerUrl: account.settings.profile.bannerUrl ?? "",
+            location: account.settings.profile.location ?? "",
             disclosureMode,
             stagePersonality: account.settings.privacy.stagePersonality ?? "",
             access: account.settings.privacy.access,
@@ -803,6 +805,41 @@ export function createNoodleStorage(db: DB) {
                 stagePersonality: stageProfile.stagePersonality,
               },
             } satisfies NoodleAccountSettings),
+            updatedAt: now(),
+          })
+          .where(eq(noodleAccounts.id, id));
+        const updatedRows = await tx.select().from(noodleAccounts).where(eq(noodleAccounts.id, id));
+        return updatedRows[0] ? mapAccount(updatedRows[0]) : null;
+      });
+    },
+
+    // Inline profile edits (name/handle/bio/location/avatar/banner) for a stage profile.
+    // Private-only by design: the public `updateAccountProfile` filters to visibility=public,
+    // so stage profiles need their own write path that keeps Slice 1b's isolation intact.
+    async updatePrivateAccountProfile(
+      id: string,
+      input: NoodleAccountProfileUpdateInput,
+    ): Promise<NoodleAccount | null> {
+      return db.transaction(async (tx) => {
+        const rows = await tx
+          .select()
+          .from(noodleAccounts)
+          .where(and(eq(noodleAccounts.id, id), eq(noodleAccounts.visibility, "private")));
+        const row = rows[0];
+        if (!row) return null;
+        const settings = normalizeNoodleAccountSettings(row.settings);
+        const nextSettings: NoodleAccountSettings = {
+          ...settings,
+          profile: { ...settings.profile, ...input.profile },
+        };
+        await tx
+          .update(noodleAccounts)
+          .set({
+            ...(input.handle !== undefined && { handle: normalizeHandle(input.handle, row.entityId) }),
+            ...(input.displayName !== undefined && { displayName: input.displayName.trim().slice(0, 120) }),
+            ...(input.bio !== undefined && { bio: input.bio.slice(0, 500) }),
+            ...(input.avatarUrl !== undefined && { avatarUrl: input.avatarUrl }),
+            settings: JSON.stringify(nextSettings),
             updatedAt: now(),
           })
           .where(eq(noodleAccounts.id, id));
@@ -1886,6 +1923,21 @@ export function createNoodleStorage(db: DB) {
         .from(noodleAccountSubscriptions)
         .where(eq(noodleAccountSubscriptions.viewerAccountId, viewerAccountId));
       return rows.map(mapSubscription);
+    },
+
+    // The viewer personas subscribed to one stage profile — powers the profile page's
+    // Subscribers list (NoodleR's analog to Noodle's followers).
+    async listSubscribersForCreator(creatorAccountId: string): Promise<NoodleAccount[]> {
+      const rows = await db
+        .select()
+        .from(noodleAccounts)
+        .innerJoin(
+          noodleAccountSubscriptions,
+          eq(noodleAccountSubscriptions.viewerAccountId, noodleAccounts.id),
+        )
+        .where(eq(noodleAccountSubscriptions.creatorAccountId, creatorAccountId))
+        .orderBy(desc(noodleAccountSubscriptions.createdAt));
+      return rows.map((row) => mapAccount(row.noodle_accounts));
     },
 
     async unlockPost(viewerAccountId: string, postId: string): Promise<NoodlePostUnlock | null> {

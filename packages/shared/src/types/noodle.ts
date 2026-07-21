@@ -116,6 +116,8 @@ export interface NoodlerStageProfile {
   bio: string;
   avatarUrl: string | null;
   avatarCrop: NoodleAvatarCrop | null;
+  bannerUrl: string;
+  location: string;
   disclosureMode: NoodleIdentityDisclosure | null;
   stagePersonality: string;
   publicIdentity: { displayName: string; handle: string } | null;

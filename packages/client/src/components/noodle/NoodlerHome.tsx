@@ -17,9 +17,10 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import { toast } from "sonner";
 import type {
+  NoodleAccountProfileUpdateInput,
   NoodleIdentityDisclosure,
   NoodleAccount,
   NoodleInteraction,
@@ -41,6 +42,8 @@ import {
   useNoodlerAccounts,
   useNoodlerEligibleAccounts,
   useNoodlerPosts,
+  useNoodlerSubscribers,
+  useUpdateNoodlerStageProfileMedia,
   useNoodlerViewer,
   useRemoveNoodlerInteraction,
   useToggleNoodlerSubscription,
@@ -67,7 +70,15 @@ import {
   useNoodlePostCardController,
 } from "./NoodleHome";
 import { ConversationMediaPickerPanel, type ConversationMediaPickerTabId } from "../chat/ConversationMediaPickerPanel";
-import { NoodleShell, NOODLE_PERSONA_SWITCHER_PAGE_SIZE, NOODLE_PINK, useNoodleAccent } from "./NoodleShell";
+import {
+  Avatar,
+  NoodleLogo,
+  NoodleShell,
+  NOODLE_PERSONA_SWITCHER_PAGE_SIZE,
+  NOODLE_PINK,
+  useNoodleAccent,
+} from "./NoodleShell";
+import { useUploadGlobalGalleryImages } from "../../hooks/use-global-gallery";
 import { Modal } from "../ui/Modal";
 import type { NoodleNavigationState } from "./noodle-navigation.types";
 
@@ -363,6 +374,9 @@ export function NoodlerHome({ navigation, onNavigate }: NoodlerHomeProps) {
   const postCardCtx = postCardController.ctx;
   const selectedProfile = accountsQuery.data?.find((profile) => profile.id === selectedProfileId) ?? null;
   const postsQuery = useNoodlerPosts(selectedProfile?.id ?? null);
+  const subscribersQuery = useNoodlerSubscribers(selectedProfile?.id ?? null);
+  const updateProfileMedia = useUpdateNoodlerStageProfileMedia();
+  const uploadGlobalImages = useUploadGlobalGalleryImages();
   const eligiblePublicAccounts = eligibleAccountsQuery.data?.pages.flatMap((page) => page.items) ?? [];
   const selectedSource = eligiblePublicAccounts.find((account) => account.id === draftPublicAccountId) ?? null;
   const sourcePickerLoading = eligibleAccountsQuery.isLoading || eligibleAccountsQuery.isFetching;
@@ -512,6 +526,24 @@ export function NoodlerHome({ navigation, onNavigate }: NoodlerHomeProps) {
       ppvPrice,
       onSuccess: () => setGuidedProfile(null),
     });
+  };
+
+  const saveStageProfileMedia = (input: NoodleAccountProfileUpdateInput, onDone?: () => void) => {
+    if (!selectedProfile) return;
+    updateProfileMedia.mutate(
+      { accountId: selectedProfile.id, ...input },
+      {
+        onSuccess: () => {
+          onDone?.();
+          toast.success("Profile updated.");
+        },
+        onError: (error) => toast.error(errorMessage(error, "Could not update this profile.")),
+      },
+    );
+  };
+  const uploadStageProfileImage = async (file: File): Promise<string | null> => {
+    const images = await uploadGlobalImages.mutateAsync({ files: [file] });
+    return images[0]?.url ?? null;
   };
 
   const submitInlinePost = ({ profileId, direction, access, ppvPrice, onSuccess }: PrivatePostSubmission) => {
@@ -708,11 +740,17 @@ export function NoodlerHome({ navigation, onNavigate }: NoodlerHomeProps) {
         <StageProfileView
           profile={selectedProfile}
           posts={postsQuery.data ?? []}
+          postCardCtx={postCardCtx}
+          subscribers={subscribersQuery.data ?? []}
           viewerAccounts={viewerAccounts}
           isLoading={postsQuery.isLoading}
           isError={postsQuery.isError}
           onRetry={() => void postsQuery.refetch()}
           onEdit={() => beginEdit(selectedProfile)}
+          onSaveProfile={saveStageProfileMedia}
+          saveProfilePending={updateProfileMedia.isPending}
+          onUploadImage={uploadStageProfileImage}
+          uploadPending={uploadGlobalImages.isPending}
           onDelete={() => {
             if (!window.confirm(`Delete ${selectedProfile.displayName} and all of this NoodleR profile's posts?`)) {
               return;
@@ -1416,54 +1454,229 @@ function WizardFooter({
   );
 }
 
+type StageProfileTab = "posts" | "media" | "subscribers";
+
 function StageProfileView({
   profile,
   posts,
+  postCardCtx,
+  subscribers,
   viewerAccounts,
   isLoading,
   isError,
   onRetry,
   onEdit,
+  onSaveProfile,
+  saveProfilePending,
+  onUploadImage,
+  uploadPending,
   onDelete,
   onGuide,
   accessPending,
   deletePending,
   onAccessChange,
+  composer,
 }: {
   profile: NoodlerManagedStageProfile;
-  posts: Array<{ id: string; content: string; imagePrompt: string | null; createdAt: string }>;
+  posts: NoodlerPostView[];
+  postCardCtx: ReturnType<typeof useNoodlePostCardController>["ctx"];
+  subscribers: NoodleAccount[];
   viewerAccounts: NoodleAccount[];
   isLoading: boolean;
   isError: boolean;
   onRetry: () => void;
   onEdit: () => void;
+  onSaveProfile: (input: NoodleAccountProfileUpdateInput, onDone?: () => void) => void;
+  saveProfilePending: boolean;
+  onUploadImage: (file: File) => Promise<string | null>;
+  uploadPending: boolean;
   onDelete: () => void;
   onGuide: () => void;
   accessPending: boolean;
   deletePending: boolean;
   onAccessChange: (access: NoodlerManagedStageProfile["access"]) => void;
+  composer?: ReactNode;
 }) {
   const [accessSettingsOpen, setAccessSettingsOpen] = useState(false);
+  const [tab, setTab] = useState<StageProfileTab>("posts");
+  const [editing, setEditing] = useState(false);
+  const [draftName, setDraftName] = useState(profile.displayName);
+  const [draftHandle, setDraftHandle] = useState(profile.handle);
+  const [draftBio, setDraftBio] = useState(profile.bio);
+  const [draftLocation, setDraftLocation] = useState(profile.location);
+  const [uploadTarget, setUploadTarget] = useState<"avatar" | "banner" | null>(null);
+  const avatarInputRef = useRef<HTMLInputElement | null>(null);
+  const bannerInputRef = useRef<HTMLInputElement | null>(null);
   const accent = useNoodleAccent();
+
+  const beginInlineEdit = () => {
+    setDraftName(profile.displayName);
+    setDraftHandle(profile.handle);
+    setDraftBio(profile.bio);
+    setDraftLocation(profile.location);
+    setEditing(true);
+  };
+  const saveInlineEdit = () => {
+    if (draftName.trim().length === 0 || draftHandle.trim().length === 0) return;
+    onSaveProfile(
+      {
+        displayName: draftName.trim(),
+        handle: draftHandle.trim(),
+        bio: draftBio,
+        profile: { location: draftLocation.trim() },
+      },
+      () => setEditing(false),
+    );
+  };
+  const handleImageFile = async (target: "avatar" | "banner", event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setUploadTarget(target);
+    try {
+      const url = await onUploadImage(file);
+      if (!url) return;
+      onSaveProfile(target === "avatar" ? { avatarUrl: url, profile: {} } : { profile: { bannerUrl: url } });
+    } finally {
+      setUploadTarget(null);
+    }
+  };
+
+  const mediaPosts = posts.filter((post) => Boolean(post.imageUrl));
+  const shownPosts = tab === "media" ? mediaPosts : posts;
+
   return (
     <>
-      <section className="border-b border-[var(--noodle-divider)] px-5 py-6">
-        <div className="flex items-start gap-4">
-          <ProfileInitial profile={profile} large />
-          <div className="min-w-0 flex-1">
+      <input
+        ref={avatarInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(event) => void handleImageFile("avatar", event)}
+      />
+      <input
+        ref={bannerInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(event) => void handleImageFile("banner", event)}
+      />
+      <button
+        type="button"
+        onClick={() => bannerInputRef.current?.click()}
+        disabled={uploadTarget === "banner"}
+        className="relative block h-40 w-full overflow-hidden bg-[var(--noodle-blue)]/15 text-left disabled:cursor-wait"
+        title="Upload banner"
+      >
+        {profile.bannerUrl ? (
+          <img src={profile.bannerUrl} alt="" className="h-full w-full object-cover" />
+        ) : (
+          <div className="flex h-full items-center justify-center bg-[var(--noodle-blue)]/10">
+            <NoodleLogo className="h-20 w-32 opacity-70" />
+          </div>
+        )}
+        {uploadTarget === "banner" && (
+          <span className="absolute bottom-3 right-3 rounded-full bg-[var(--background)] px-3 py-1.5 text-xs font-semibold text-[var(--noodle-blue)] shadow-lg">
+            Uploading...
+          </span>
+        )}
+      </button>
+      <section className="border-b border-[var(--noodle-divider)] px-5 pb-6">
+        <div className="-mt-10 flex items-end justify-between gap-3">
+          <button
+            type="button"
+            onClick={() => avatarInputRef.current?.click()}
+            disabled={uploadTarget === "avatar"}
+            className="relative rounded-full bg-[var(--background)] p-1 text-left disabled:cursor-wait"
+            title="Upload avatar"
+          >
+            <Avatar account={profile} size="lg" />
+            {uploadTarget === "avatar" && (
+              <span className="absolute inset-1 flex items-center justify-center rounded-full bg-black/50 text-[0.625rem] font-semibold text-white">
+                Uploading
+              </span>
+            )}
+          </button>
+          <div className="mb-1 flex flex-wrap justify-end gap-2">
+            {editing ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setEditing(false)}
+                  className="inline-flex min-h-9 items-center rounded-full border border-[var(--noodle-divider)] px-4 text-xs font-bold hover:bg-[var(--accent)]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={saveInlineEdit}
+                  disabled={saveProfilePending || draftName.trim().length === 0 || draftHandle.trim().length === 0}
+                  className="inline-flex min-h-9 items-center gap-2 rounded-full bg-[var(--noodle-blue)] px-4 text-xs font-bold text-zinc-950 [&_svg]:!text-zinc-950 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {saveProfilePending ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                  Save
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={beginInlineEdit}
+                disabled={uploadPending}
+                className="inline-flex min-h-9 items-center gap-2 rounded-full border border-[var(--noodle-divider)] px-4 text-xs font-bold hover:bg-[var(--accent)] disabled:opacity-50"
+              >
+                <Pencil size={14} />
+                Edit profile
+              </button>
+            )}
+          </div>
+        </div>
+        {editing ? (
+          <div className="mt-3 space-y-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <label className="block space-y-1.5">
+                <span className="text-xs font-semibold">Display name</span>
+                <input value={draftName} onChange={(event) => setDraftName(event.target.value)} className={fieldClass} />
+              </label>
+              <label className="block space-y-1.5">
+                <span className="text-xs font-semibold">@name</span>
+                <input
+                  value={draftHandle}
+                  onChange={(event) => setDraftHandle(event.target.value)}
+                  className={fieldClass}
+                />
+              </label>
+            </div>
+            <label className="block space-y-1.5">
+              <span className="text-xs font-semibold">Bio</span>
+              <textarea value={draftBio} onChange={(event) => setDraftBio(event.target.value)} className={textareaClass} />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-xs font-semibold">Location</span>
+              <input
+                value={draftLocation}
+                onChange={(event) => setDraftLocation(event.target.value)}
+                className={fieldClass}
+              />
+            </label>
+          </div>
+        ) : (
+          <div className="mt-3">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-xl font-black">{profile.displayName}</h2>
               <DisclosureBadge mode={profile.disclosureMode} />
             </div>
             <p className="mt-1 text-sm text-[var(--muted-foreground)]">@{profile.handle}</p>
             {profile.bio && <p className="mt-3 max-w-[70ch] text-sm leading-6">{profile.bio}</p>}
+            {profile.location && (
+              <p className="mt-2 text-xs text-[var(--muted-foreground)]">{profile.location}</p>
+            )}
             {profile.publicIdentity && (
               <p className="mt-3 text-xs text-[var(--muted-foreground)]">
                 Openly linked to {profile.publicIdentity.displayName} (@{profile.publicIdentity.handle})
               </p>
             )}
           </div>
-        </div>
+        )}
         <div className="mt-5 flex flex-wrap gap-2">
           <button
             type="button"
@@ -1479,7 +1692,7 @@ function StageProfileView({
             className="inline-flex min-h-11 items-center gap-2 rounded-md border border-[var(--noodle-divider)] px-3 text-xs font-bold hover:bg-[var(--accent)]"
           >
             <Pencil size={14} />
-            Edit profile
+            Edit voice
           </button>
           <button
             type="button"
@@ -1500,6 +1713,32 @@ function StageProfileView({
           </button>
         </div>
       </section>
+      {composer}
+      <div className="grid grid-cols-3 border-b border-[var(--noodle-divider)]">
+        {(
+          [
+            { id: "posts", label: "Posts" },
+            { id: "media", label: "Media" },
+            { id: "subscribers", label: `Subscribers${subscribers.length ? ` (${subscribers.length})` : ""}` },
+          ] as const
+        ).map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            onClick={() => setTab(option.id)}
+            aria-pressed={tab === option.id}
+            className={cn(
+              "relative flex h-12 items-center justify-center text-sm font-bold text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+              tab === option.id && "text-[var(--foreground)]",
+            )}
+          >
+            {option.label}
+            {tab === option.id && (
+              <span className="absolute bottom-0 left-1/2 h-1 w-14 -translate-x-1/2 rounded-full bg-[var(--noodle-blue)]" />
+            )}
+          </button>
+        ))}
+      </div>
       <Modal
         open={accessSettingsOpen}
         onClose={() => setAccessSettingsOpen(false)}
@@ -1561,35 +1800,44 @@ function StageProfileView({
           )}
         </div>
       </Modal>
-      {isLoading ? (
+      {tab === "subscribers" ? (
+        subscribers.length > 0 ? (
+          <div className="divide-y divide-[var(--noodle-divider)]">
+            {subscribers.map((account) => (
+              <div key={account.id} className="flex items-center gap-3 px-5 py-3">
+                <Avatar account={account} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-semibold">{account.displayName}</span>
+                  <span className="block truncate text-xs text-[var(--muted-foreground)]">@{account.handle}</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyState title="No subscribers yet." detail="Personas who subscribe to this profile appear here." />
+        )
+      ) : isLoading ? (
         <div className="flex justify-center py-16">
           <Loader2 size={24} className="animate-spin text-[var(--noodle-blue)]" />
         </div>
       ) : isError ? (
         <EmptyState title="Private posts could not be loaded." action="Try again" onAction={onRetry} />
-      ) : posts.length > 0 ? (
-        <div className="divide-y divide-[var(--noodle-divider)]">
-          {posts.map((post) => (
-            <article key={post.id} className="px-5 py-5">
-              <p className="whitespace-pre-wrap text-sm leading-6">{post.content}</p>
-              {post.imagePrompt && (
-                <p className="mt-3 rounded-lg bg-[var(--accent)] p-3 text-xs leading-5 text-[var(--muted-foreground)]">
-                  <span className="font-bold text-[var(--foreground)]">Stored image prompt: </span>
-                  {post.imagePrompt}
-                </p>
-              )}
-              <time className="mt-3 block text-xs text-[var(--muted-foreground)]">
-                {new Date(post.createdAt).toLocaleString()}
-              </time>
-            </article>
+      ) : shownPosts.length > 0 ? (
+        <div>
+          {shownPosts.map((post) => (
+            <NoodlePostCard key={post.id} post={toNoodlePostCardModel(post, profile)} ctx={postCardCtx} />
           ))}
         </div>
       ) : (
         <EmptyState
-          title="No private posts yet."
-          detail="Guide the first post for this stage identity."
-          action="Guide post"
-          onAction={onGuide}
+          title={tab === "media" ? "No image posts yet." : "No private posts yet."}
+          detail={
+            tab === "media"
+              ? "Generated post images show up here."
+              : "Guide the first post for this stage identity."
+          }
+          action={tab === "media" ? undefined : "Guide post"}
+          onAction={tab === "media" ? undefined : onGuide}
         />
       )}
     </>

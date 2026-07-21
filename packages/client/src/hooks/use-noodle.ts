@@ -28,6 +28,7 @@ import type {
   NoodleStageProfileDraftRequest,
   NoodlerStageProfile,
   NoodlerManagedStageProfile,
+  NoodlerPostView,
   NoodlerViewerScope,
   NoodlerCreateInteractionInput,
   NoodlerRemoveInteractionInput,
@@ -96,9 +97,31 @@ export function useNoodlerEligibleAccounts(search: string, kind: "all" | "charac
 export function useNoodlerPosts(accountId: string | null) {
   return useQuery({
     queryKey: noodleKeys.privatePosts(accountId ?? "none"),
-    queryFn: () => api.get<NoodlePost[]>(`/noodle/noodler/accounts/${encodeURIComponent(accountId!)}/posts`),
+    queryFn: () => api.get<NoodlerPostView[]>(`/noodle/noodler/accounts/${encodeURIComponent(accountId!)}/posts`),
     enabled: Boolean(accountId),
     staleTime: 10_000,
+  });
+}
+
+export function useNoodlerSubscribers(accountId: string | null) {
+  return useQuery({
+    queryKey: [...noodleKeys.privateAccounts(), "subscribers", accountId ?? "none"],
+    queryFn: () =>
+      api.get<NoodleAccount[]>(`/noodle/noodler/accounts/${encodeURIComponent(accountId!)}/subscribers`),
+    enabled: Boolean(accountId),
+    staleTime: 10_000,
+  });
+}
+
+export function useUpdateNoodlerStageProfileMedia() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ accountId, ...input }: { accountId: string } & NoodleAccountProfileUpdateInput) =>
+      api.put<NoodleAccount>(`/noodle/noodler/accounts/${encodeURIComponent(accountId)}/profile`, input),
+    onSuccess: (_data, { accountId }) => {
+      void qc.invalidateQueries({ queryKey: noodleKeys.privateAccounts() });
+      void qc.invalidateQueries({ queryKey: noodleKeys.privatePosts(accountId) });
+    },
   });
 }
 

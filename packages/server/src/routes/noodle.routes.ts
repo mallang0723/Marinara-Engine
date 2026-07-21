@@ -468,7 +468,58 @@ export async function noodleRoutes(app: FastifyInstance) {
     if (!(await noodle.getPrivateAccountById(id))) {
       return reply.code(404).send({ error: "NoodleR stage profile not found" });
     }
-    return noodle.listPrivatePostsByAccount(id, 40);
+    // The stage-profile owner sees every one of their own posts (nothing is gated to them),
+    // so return the same NoodlerPostView shape the viewer feed uses — with interactions —
+    // so the profile page can render the real post card with like/repost/reply counts.
+    const posts = await noodle.listPrivatePostsByAccount(id, 40);
+    const interactionsByPostId = new Map<string, NoodlerPostView["interactions"]>();
+    for (const interaction of await noodle.listPrivateInteractions(posts.map((post) => post.id))) {
+      const existing = interactionsByPostId.get(interaction.postId) ?? [];
+      existing.push(interaction);
+      interactionsByPostId.set(interaction.postId, existing);
+    }
+    return posts.map(
+      (post): NoodlerPostView => ({
+        id: post.id,
+        authorAccountId: post.authorAccountId,
+        access: post.access,
+        ppvPrice: post.ppvPrice,
+        locked: false,
+        content: post.content,
+        imageUrl: post.imageUrl,
+        imagePrompt: post.imagePrompt,
+        metadata: post.metadata,
+        createdAt: post.createdAt,
+        interactions: interactionsByPostId.get(post.id) ?? [],
+      }),
+    );
+  });
+
+  app.get("/noodler/accounts/:id/subscribers", async (req, reply) => {
+    const settings = await noodle.getSettings();
+    if (!settings.enableNoodler) return reply.code(404).send({ error: "Not Found" });
+    const { id } = req.params as { id: string };
+    if (!(await noodle.getPrivateAccountById(id))) {
+      return reply.code(404).send({ error: "NoodleR stage profile not found" });
+    }
+    return noodle.listSubscribersForCreator(id);
+  });
+
+  // Inline profile edits for a stage profile (name/handle/bio/location/avatar/banner).
+  // Private-only via getPrivateAccountById + updatePrivateAccountProfile — this never touches
+  // the public `/accounts/:id/profile` path, preserving public/private isolation.
+  app.put("/noodler/accounts/:id/profile", async (req, reply) => {
+    const settings = await noodle.getSettings();
+    if (!settings.enableNoodler) return reply.code(404).send({ error: "Not Found" });
+    const { id } = req.params as { id: string };
+    const parsed = noodleAccountProfileUpdateSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    if (!(await noodle.getPrivateAccountById(id))) {
+      return reply.code(404).send({ error: "NoodleR stage profile not found" });
+    }
+    const updated = await noodle.updatePrivateAccountProfile(id, parsed.data);
+    if (!updated) return reply.code(404).send({ error: "NoodleR stage profile not found" });
+    return updated;
   });
 
   app.put("/refresh-schedule", async (req, reply) => {
