@@ -31,7 +31,9 @@ import type {
   NoodlerStageProfile,
   Persona,
 } from "@marinara-engine/shared";
+import { useQueryClient } from "@tanstack/react-query";
 import {
+  noodleKeys,
   useCreateNoodlerInteraction,
   useCreateNoodlerStageProfile,
   useDeleteNoodlerPost,
@@ -171,6 +173,7 @@ function errorMessage(error: unknown, fallback: string) {
 
 export function NoodlerHome({ navigation, onNavigate }: NoodlerHomeProps) {
   const { data, isError, refetch } = useNoodle();
+  const queryClient = useQueryClient();
   const updateSettings = useUpdateNoodleSettings();
   const enabled = data?.settings.enableNoodler === true;
   const accountsQuery = useNoodlerAccounts(navigation.mode === "private" && enabled);
@@ -312,19 +315,29 @@ export function NoodlerHome({ navigation, onNavigate }: NoodlerHomeProps) {
       setMobileDrawerOpen(false);
     }
   };
+  // The shared post-card handlers below refetch the viewer feed, but the stage-profile page
+  // reads its own privatePosts query. Refresh it too so edits/deletes/reactions made from the
+  // profile card reflect there instead of going stale until navigation.
+  const refetchOpenProfilePosts = () => {
+    if (selectedProfileId) {
+      void queryClient.invalidateQueries({ queryKey: noodleKeys.privatePosts(selectedProfileId) });
+    }
+  };
   const reactToPost = (post: NoodlePostCardModel, type: "like" | "repost", active = false) => {
     if (!viewerPersonaId) return;
     const onError = (error: unknown) =>
       toast.error(errorMessage(error, active ? "Could not undo that reaction." : "Could not react to this post."));
-    if (active) removeInteraction.mutate({ postId: post.id, personaId: viewerPersonaId, type }, { onError });
-    else createInteraction.mutate({ postId: post.id, personaId: viewerPersonaId, type }, { onError });
+    const onSuccess = refetchOpenProfilePosts;
+    if (active) removeInteraction.mutate({ postId: post.id, personaId: viewerPersonaId, type }, { onError, onSuccess });
+    else createInteraction.mutate({ postId: post.id, personaId: viewerPersonaId, type }, { onError, onSuccess });
   };
   const reactToReply = (post: NoodlePostCardModel, reply: NoodleInteraction, active: boolean) => {
     if (!viewerPersonaId) return;
     const payload = { postId: post.id, personaId: viewerPersonaId, type: "like" as const, parentInteractionId: reply.id };
     const onError = (error: unknown) => toast.error(errorMessage(error, "Could not react to this reply."));
-    if (active) removeInteraction.mutate(payload, { onError });
-    else createInteraction.mutate(payload, { onError });
+    const onSuccess = refetchOpenProfilePosts;
+    if (active) removeInteraction.mutate(payload, { onError, onSuccess });
+    else createInteraction.mutate(payload, { onError, onSuccess });
   };
   const submitReply = async (
     post: NoodlePostCardModel,
@@ -340,6 +353,7 @@ export function NoodlerHome({ navigation, onNavigate }: NoodlerHomeProps) {
         ...(input.parentInteractionId ? { parentInteractionId: input.parentInteractionId } : {}),
       },
       {
+        onSuccess: refetchOpenProfilePosts,
         onError: (error) => toast.error(errorMessage(error, "Could not post this reply.")),
       },
     );
@@ -348,7 +362,10 @@ export function NoodlerHome({ navigation, onNavigate }: NoodlerHomeProps) {
     await updatePost.mutateAsync(
       { id: post.id, content },
       {
-        onSuccess: () => void viewerQuery.refetch(),
+        onSuccess: () => {
+          void viewerQuery.refetch();
+          refetchOpenProfilePosts();
+        },
         onError: (error) => toast.error(errorMessage(error, "Could not update this post.")),
       },
     );
@@ -356,7 +373,10 @@ export function NoodlerHome({ navigation, onNavigate }: NoodlerHomeProps) {
   const deleteNoodlePost = (post: NoodlePostCardModel) => {
     if (!window.confirm("Delete this NoodleR post along with its likes, reposts, and replies?")) return;
     deletePost.mutate(post.id, {
-      onSuccess: () => void viewerQuery.refetch(),
+      onSuccess: () => {
+        void viewerQuery.refetch();
+        refetchOpenProfilePosts();
+      },
       onError: (error) => toast.error(errorMessage(error, "Could not delete this post.")),
     });
   };
