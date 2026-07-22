@@ -59,7 +59,6 @@ import { useActivePersona, usePersonas } from "../../hooks/use-characters";
 import { useConnections } from "../../hooks/use-connections";
 import { cn } from "../../lib/utils";
 import { useUIStore } from "../../stores/ui.store";
-import { GuidedPostModal } from "./GuidedPostModal";
 import {
   BrowserChrome,
   formatTime,
@@ -275,7 +274,6 @@ export function NoodlerHome({ navigation, onNavigate }: NoodlerHomeProps) {
   const [draftConnectionId, setDraftConnectionId] = useState("");
   const [previousDraft, setPreviousDraft] = useState<NoodleStageProfileInput | null>(null);
   const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
-  const [guidedProfile, setGuidedProfile] = useState<NoodlerStageProfile | null>(null);
   const [generationError, setGenerationError] = useState<string | null>(null);
   useEffect(() => {
     const profiles = accountsQuery.data;
@@ -308,7 +306,6 @@ export function NoodlerHome({ navigation, onNavigate }: NoodlerHomeProps) {
     setSelectedProfileId(null);
     setCreationStep(null);
     setProfileDraft(null);
-    setGuidedProfile(null);
     setEditingProfileId(null);
     if (enabled) {
       onNavigate({ mode: "private", view: "hub" });
@@ -558,17 +555,6 @@ export function NoodlerHome({ navigation, onNavigate }: NoodlerHomeProps) {
         onError: (error) => setGenerationError(errorMessage(error, "Could not generate this post.")),
       },
     );
-  };
-
-  const submitGuidedPost = ({ direction, access, ppvPrice }: Omit<PrivatePostSubmission, "profileId">) => {
-    if (!guidedProfile) return;
-    generatePrivatePost({
-      profileId: guidedProfile.id,
-      direction,
-      access,
-      ppvPrice,
-      onSuccess: () => setGuidedProfile(null),
-    });
   };
 
   const saveStageProfileMedia = (input: NoodleAccountProfileUpdateInput, onDone?: () => void) => {
@@ -822,10 +808,6 @@ export function NoodlerHome({ navigation, onNavigate }: NoodlerHomeProps) {
               onError: (error) => toast.error(errorMessage(error, "Could not delete the stage profile.")),
             });
           }}
-          onGuide={() => {
-            setGenerationError(null);
-            setGuidedProfile(selectedProfile);
-          }}
           accessPending={updateAccess.isPending}
           deletePending={deleteProfile.isPending}
           onAccessChange={(access) =>
@@ -838,18 +820,6 @@ export function NoodlerHome({ navigation, onNavigate }: NoodlerHomeProps) {
             )
           }
         />
-        {guidedProfile && (
-          <GuidedPostModal
-            profile={guidedProfile}
-            isPending={generatePost.isPending}
-            error={generationError}
-            onClose={() => {
-              setGuidedProfile(null);
-              setGenerationError(null);
-            }}
-            onGenerate={submitGuidedPost}
-          />
-        )}
       </NoodlerFrame>
       </NoodleShell>
     );
@@ -1530,7 +1500,6 @@ function StageProfileView({
   onUploadImage,
   uploadPending,
   onDelete,
-  onGuide,
   accessPending,
   deletePending,
   onAccessChange,
@@ -1550,7 +1519,6 @@ function StageProfileView({
   onUploadImage: (file: File) => Promise<string | null>;
   uploadPending: boolean;
   onDelete: () => void;
-  onGuide: () => void;
   accessPending: boolean;
   deletePending: boolean;
   onAccessChange: (access: NoodlerManagedStageProfile["access"]) => void;
@@ -1739,14 +1707,6 @@ function StageProfileView({
         <div className="mt-5 flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={onGuide}
-            className="inline-flex min-h-11 items-center gap-2 rounded-md bg-[var(--noodle-blue)] px-3 text-xs font-bold text-zinc-950 [&_svg]:!text-zinc-950 hover:opacity-90"
-          >
-            <Sparkles size={15} />
-            Guide post
-          </button>
-          <button
-            type="button"
             onClick={onEdit}
             className="inline-flex min-h-11 items-center gap-2 rounded-md border border-[var(--noodle-divider)] px-3 text-xs font-bold hover:bg-[var(--accent)]"
           >
@@ -1893,10 +1853,8 @@ function StageProfileView({
           detail={
             tab === "media"
               ? "Generated post images show up here."
-              : "Guide the first post for this stage identity."
+              : "Use the composer above to post as this stage identity."
           }
-          action={tab === "media" ? undefined : "Guide post"}
-          onAction={tab === "media" ? undefined : onGuide}
         />
       )}
     </>
