@@ -216,7 +216,11 @@ export function useToggleNoodlerSubscription() {
             `/noodle/noodler/accounts/${encodeURIComponent(creatorAccountId)}/subscribe?personaId=${encodeURIComponent(personaId)}`,
           )
         : api.post(`/noodle/noodler/accounts/${encodeURIComponent(creatorAccountId)}/subscribe`, { personaId }),
-    onSuccess: (_result, input) => qc.invalidateQueries({ queryKey: noodleKeys.viewer(input.personaId) }),
+    onSuccess: (_result, input) => {
+      void qc.invalidateQueries({ queryKey: noodleKeys.viewer(input.personaId) });
+      // Keep the creator's own Subscribers tab in sync with viewer-feed subscribe/unsubscribe.
+      void qc.invalidateQueries({ queryKey: [...noodleKeys.privateAccounts(), "subscribers", input.creatorAccountId] });
+    },
   });
 }
 

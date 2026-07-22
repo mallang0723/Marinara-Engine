@@ -2008,6 +2008,7 @@ function ViewerHub({
         onSubmit={onSubmitPost}
         isPosting={isPosting}
         error={postError}
+        lockAuthor
       />
       <div className="border-b border-[var(--noodle-divider)] px-4 py-2">
         <button
@@ -2110,6 +2111,7 @@ function InlineGuidedComposer({
   onSubmit,
   isPosting,
   error,
+  lockAuthor = false,
 }: {
   managedProfiles: NoodlerManagedStageProfile[];
   selectedProfileId: string | null;
@@ -2117,6 +2119,9 @@ function InlineGuidedComposer({
   onSubmit: (input: PrivatePostSubmission) => void;
   isPosting: boolean;
   error: string | null;
+  // When true, never render the "Posting as" picker. The main-timeline composer posts as one
+  // fixed identity; identity switching happens on each stage profile's own page instead.
+  lockAuthor?: boolean;
 }) {
   const [direction, setDirection] = useState("");
   const [access, setAccess] = useState<NoodlePostAccess>("public");
@@ -2235,7 +2240,7 @@ function InlineGuidedComposer({
       }
       footer={error && <p className="mt-2 pl-14 text-xs text-[var(--destructive)]">{error}</p>}
     >
-      {managedProfiles.length > 1 && (
+      {!lockAuthor && managedProfiles.length > 1 && (
         <label className="mb-1 flex items-center gap-2 text-xs text-[var(--muted-foreground)]">
           <span className="font-semibold">Posting as</span>
           <select
